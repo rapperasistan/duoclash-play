@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Duo Clash · Games for two</title>
+<meta name="description" content="Games for two on a video call. Word races, chess, four in a row and more, for couples and best friends, in your browser or on the iPhone app.">
+<meta property="og:title" content="Duo Clash · Games for two">
+<meta property="og:description" content="Games for two on a video call, in your browser or on the iPhone app.">
+<meta property="og:image" content="https://play.duoclash.app/assets/og.jpg">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0b0c10">
+<link rel="icon" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=Schibsted+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=1">
+</head>
+<body>
+<div class="app" data-view="loading">
+  <header class="nav" id="nav">
+    <a class="logo" href="#" data-go-home><img src="assets/icon-512.png" alt=""><span>Duo Clash</span></a>
+    <nav class="links" id="links"></nav>
+    <span class="grow"></span>
+    <div class="tools" id="tools"></div>
+  </header>
+
+  <aside id="call" hidden>
+    <div class="tile them">
+      <video data-remote autoplay playsinline></video>
+      <span class="who"></span>
+      <span class="note"></span>
+      <span class="label"></span>
+      <span class="mark"></span>
+      <span class="badge" hidden></span>
+    </div>
+    <div class="tile you">
+      <video data-local autoplay playsinline muted></video>
+      <span class="who"></span>
+      <span class="label"></span>
+      <span class="mark"></span>
+      <span class="badge" hidden></span>
+    </div>
+    <div class="controls">
+      <button class="round" data-mic aria-label="Microphone"></button>
+      <button class="round" data-cam aria-label="Camera"></button>
+      <button class="round hang" data-hang aria-label="End call" hidden></button>
+      <button class="chip" data-start hidden>Start video</button>
+    </div>
+  </aside>
+
+  <main id="view"><div class="center"><div class="spinner"></div></div></main>
+</div>
+<dialog id="detail" class="detail"></dialog>
+<dialog id="menu" class="menu-dialog"></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="js/catalog.js?v=1"></script>
+<script type="module" src="js/app.js?v=1"></script>
+</body>
+</html>
