@@ -358,7 +358,7 @@ function browse() {
   const featured = [...playable, ...['guessCelebrity', 'chess', 'letterLink'].map(game).filter(Boolean)];
   show('browse', `
   <section class="billboard" data-billboard>
-    <div class="bb-art">${featured.map((g, i) => `<div class="slide ${i === 0 ? 'on' : ''}" data-slide-id="${g.id}">${img(g.id, 'billboard')}</div>`).join('')}</div>
+    <div class="bb-art">${featured.map((g, i) => `<div class="slide ${i === 0 ? 'on' : ''}" data-slide-id="${g.id}"><picture><source media="(max-width: 800px)" srcset="${art(g.id, 'poster')}">${img(g.id, 'billboard')}</picture></div>`).join('')}</div>
     <div class="bb-shade"></div>
     <div class="bb-copy" data-bb-copy></div>
     <div class="bb-dots">${featured.map((g, i) => `<button class="${i === 0 ? 'on' : ''}" data-bb="${i}" aria-label="${esc(g.title)}"></button>`).join('')}</div>
