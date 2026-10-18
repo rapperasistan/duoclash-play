@@ -358,7 +358,7 @@ function applyFilter(id) {
   });
 }
 
-// What a guest (or someone not paired yet) sees at the top: a made-up couple's week, said to be one.
+// What a guest (or someone not paired yet) sees at the top: a made-up couple's week.
 const HOUR = 3600000;
 const SAMPLE = {
   me: { id: 'sample-leo', name: 'Leo', avatar: 3 },
@@ -394,9 +394,10 @@ function nextMonday() {
 }
 
 /**
- * The top of the page is the couple's own space: the two of them by name, this week's podium the way
- * the app has it (the leader in the middle under a crown), and the games they've played lately with
- * any stakes still owed. Before there's a couple, a made-up one shows how it looks, and says so.
+ * The top of the page is the couple's own strip, small enough to take in at a glance: the two of
+ * them by name, this week's score (a crown on whoever leads), the games they've played lately as
+ * little tiles with the winner's face on each, and anything still owed. Before there's a couple, a
+ * made-up one shows how it looks.
  */
 function renderHead() {
   const box = $('[data-head]');
@@ -406,80 +407,62 @@ function renderHead() {
   const me = real ? state.me : SAMPLE.me;
   const them = real ? partner() : SAMPLE.them;
   const points = (id) => (real ? couple.board?.find((row) => row.id === id)?.points ?? 0 : SAMPLE.points[id]);
-  // In your own space you're "You"; in the made-up one everyone has a name.
+  // In your own strip you're "You"; in the made-up one everyone has a name.
   const called = (person) => (real && person.id === me.id ? 'You' : esc(person.name));
-  const people = [me, them].filter(Boolean).map((person) => ({ person, points: points(person.id) }));
-  people.forEach((entry) => (entry.rank = 1 + people.filter((other) => other.points > entry.points).length));
-  const started = people.some((entry) => entry.points > 0);
-  // Second on the left, first in the middle (with two, that's the right).
-  const podium = [...people].sort((a, b) => a.rank - b.rank || (a.person.id === me.id ? 1 : -1)).reverse();
+  const mine = points(me.id);
+  const theirs = points(them.id);
   const endsAt = real ? couple.weekEndsAt : nextMonday();
-  const matches = real ? (couple.matches ?? []).slice(0, 4) : SAMPLE.matches.map((match) => ({ ...match, at: Date.now() - match.ago }));
-  const owed = real ? (couple.owed ?? []).slice(0, 2) : SAMPLE.owed;
+  const matches = real ? (couple.matches ?? []).slice(0, 6) : SAMPLE.matches.map((match) => ({ ...match, at: Date.now() - match.ago }));
+  const owed = real ? (couple.owed ?? []).slice(0, 3) : SAMPLE.owed;
   const waiting = real ? (couple.rooms ?? []).filter((room) => room.phase !== 'finished' && PLAYABLE[room.game]) : [];
   const theyreIn = real && (couple.call ?? []).includes(them?.id);
 
-  const step = ({ person, points: score, rank }) => `<div class="step r${rank}">
-    ${rank === 1 ? `<span class="crown">${icon('crown')}</span>` : ''}
-    <span class="ring">${face(person, rank === 1 ? 76 : 60)}<i class="medal">${rank}</i></span>
-    <b>${called(person)}</b>
-    <span class="block"><strong>${score}</strong><small>pts</small></span>
-  </div>`;
+  const tally = (person, score, leads) => `<span class="tally ${leads ? 'leads' : ''}">
+    <span class="mini">${leads ? `<i class="crown">${icon('crown')}</i>` : ''}${face(person, 28)}</span>
+    <span class="nm">${called(person)}</span><b>${score}</b></span>`;
 
-  // Before pairing, the bar's button is the way in.
   const act = !real ? ''
-    : session.on ? `<button class="btn ghost" data-hang-call>${icon('hangUp')} End call</button>`
-    : `<button class="btn ${theyreIn ? 'play ring-call' : 'ghost'}" data-call>${icon('video')} ${theyreIn ? `Join ${esc(them.name)}` : `Call ${esc(them.name)}`}</button>`;
+    : session.on ? `<button class="btn ghost small" data-hang-call>${icon('hangUp')} End call</button>`
+    : `<button class="btn small ${theyreIn ? 'play ring-call' : 'ghost'}" data-call>${icon('video')} ${theyreIn ? `Join ${esc(them.name)}` : `Call ${esc(them.name)}`}</button>`;
 
   box.innerHTML = `
-    <div class="space-top">
-      <div class="pair-faces">${face(me, 54)}<span class="heart">${icon('heart')}</span>${face(them, 54)}</div>
-      <div class="hello">
-        <small>${state.me ? `${greeting()}, ${esc(state.me.name)}` : 'Games for two, on a video call'}</small>
-        <h1>${real ? `${esc(me.name)} &amp; ${esc(them.name)}` : state.me ? `${esc(state.me.name)} &amp; …` : 'Leo &amp; Mia'}</h1>
+    <div class="strip">
+      <div class="us">
+        <span class="pair-faces">${face(me, 40)}<span class="heart">${icon('heart')}</span>${face(them, 40)}</span>
+        <span class="names"><small>${state.me ? `${greeting()}, ${esc(state.me.name)}` : 'Games for two'}</small><b>${real ? `${esc(me.name)} &amp; ${esc(them.name)}` : state.me ? `${esc(state.me.name)} &amp; …` : 'Leo &amp; Mia'}</b></span>
       </div>
-      <div class="space-acts">
-        ${real ? '' : `<span class="sample-note">${icon('info')} ${state.me ? 'A sample couple. Your own week shows up here once you pair.' : 'A sample couple. Yours shows up here once you pair.'}</span>`}
-        ${act}
+      <div class="part week">
+        <small>This week <em>${timeLeft(endsAt)}</em></small>
+        <span class="tallies">${tally(me, mine, mine > theirs)}${tally(them, theirs, theirs > mine)}</span>
       </div>
-    </div>
-    ${waiting.map((room) => {
-      const host = room.players.find((player) => player.id === room.host);
-      const yours = room.host === me.id;
-      return `<button class="waiting-bar" data-join="${room.id}">${img(room.game, 'square')}
-        <span><b>${yours ? `Your ${esc(gameTitle(room.game))} is still open` : `${esc(host?.name ?? them.name)} is waiting for you in ${esc(gameTitle(room.game))}`}</b><small>${room.phase === 'lobby' ? 'In the lobby' : 'Under way'}</small></span>
-        <span class="btn play">${icon('play')} ${yours ? 'Back in' : 'Join'}</span></button>`;
-    }).join('')}
-    <div class="space-grid">
-      <div class="week-board">
-        <div class="board-head"><span class="trophy">${icon('trophy')}</span><h2>This week</h2><span class="left">${icon('clock')} ${timeLeft(endsAt)}</span></div>
-        ${started ? `<div class="podium">${podium.map(step).join('')}</div>`
-          : `<div class="nobody"><span class="crown big">${icon('crown')}</span><h3>Up for grabs</h3><p>Win a game this week to take the crown.</p></div>`}
-      </div>
-      <div class="lately">
-        <div class="board-head"><h2>Lately</h2></div>
-        ${matches.length ? `<ol>${matches.map((match) => {
+      <div class="part lately">
+        <small>Lately</small>
+        ${matches.length ? `<span class="tiles">${matches.map((match) => {
           const winner = match.winner === me.id ? me : match.winner === them?.id ? them : null;
           const a = match.scores?.[me.id] ?? 0;
           const b = match.scores?.[them?.id] ?? 0;
-          const score = winner === them ? `${b}–${a}` : `${a}–${b}`;
-          return `<li>${img(match.game, 'square', 'loading="lazy"')}
-            <span class="what"><b>${esc(gameTitle(match.game))}</b><small>${ago(match.at)}</small></span>
-            <span class="who-won ${winner ? (winner === me ? 'me' : 'them') : 'tie'}">${winner ? `${face(winner, 22)}${called(winner)} won` : 'A tie'} <i>${score}</i></span>
-          </li>`;
-        }).join('')}</ol>` : `<p class="quiet">Nothing played yet this week. Your first game will show up here.</p>`}
-        ${owed.map((item) => {
-          const winner = item.winner === me.id ? me : them;
-          const loser = winner === me ? them : me;
-          return `<div class="ticket"><span class="pin">${icon('flag')}</span>
-            <span><small>${called(loser)} ${real && loser === me ? 'owe' : 'owes'} ${real && winner === me ? 'you' : esc(winner.name)}</small><b>${esc(item.text)}</b></span>
-            ${real && winner === me ? `<button class="btn ghost small" data-paid="${item.id}">Paid</button>` : ''}
-          </div>`;
-        }).join('')}
+          const result = winner ? `${called(winner)} won ${winner === them ? `${b}–${a}` : `${a}–${b}`}` : `A tie, ${a}–${b}`;
+          return `<span class="tile-mini" tabindex="0">${img(match.game, 'square', 'loading="lazy"')}
+            ${winner ? `<span class="won-by">${face(winner, 18)}</span>` : '<span class="won-by tie">=</span>'}
+            <span class="tip"><b>${esc(gameTitle(match.game))}</b>${result}<small>${ago(match.at)}</small></span></span>`;
+        }).join('')}</span>` : `<span class="none">Nothing yet this week</span>`}
       </div>
-    </div>`;
+      ${act ? `<div class="part act">${act}</div>` : ''}
+    </div>
+    ${owed.length || waiting.length ? `<div class="notes">
+      ${waiting.map((room) => {
+        const host = room.players.find((player) => player.id === room.host);
+        const yours = room.host === me.id;
+        return `<button class="note waiting-note" data-join="${room.id}">${icon('play')}<span>${yours ? `Your ${esc(gameTitle(room.game))} is still open` : `${esc(host?.name ?? them.name)} is waiting in ${esc(gameTitle(room.game))}`}</span><b>${yours ? 'Back in' : 'Join'}</b></button>`;
+      }).join('')}
+      ${owed.map((item) => {
+        const winner = item.winner === me.id ? me : them;
+        const loser = winner === me ? them : me;
+        const who = real ? (loser === me ? `You owe ${esc(them.name)}` : `${esc(them.name)} owes you`) : `${esc(loser.name)} owes ${esc(winner.name)}`;
+        return `<span class="note iou">${icon('flag')}<span>${who}: <b>${esc(item.text)}</b></span>${real && winner === me ? `<button data-paid="${item.id}">Paid</button>` : ''}</span>`;
+      }).join('')}
+    </div>` : ''}`;
   $$('[data-join]', box).forEach((button) => (button.onclick = () => (location.hash = `#room/${button.dataset.join}`)));
-  $$('[data-start-join]', box).forEach((button) => (button.onclick = () => onboard()));
   $('[data-call]', box)?.addEventListener('click', () => session.start(couple.id, { ring: !theyreIn }));
   $('[data-hang-call]', box)?.addEventListener('click', () => session.hangUp());
   $$('[data-paid]', box).forEach((button) => (button.onclick = async () => {
