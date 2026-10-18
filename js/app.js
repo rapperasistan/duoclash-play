@@ -1,9 +1,9 @@
 // Duo Clash on the web (play.duoclash.app): every game laid out like a streaming service's shelves,
 // with the same accounts, couples, rooms and video call as the iPhone app, so a couple can play with
 // one on a laptop or an Android phone and the other on an iPhone.
-//   landing: a name, then a face, and the account is made (no email, no password, like the app)
-//   pair:    your code to give, or theirs to type; play.duoclash.app/#pair/123456 pairs straight away
-//   browse:  the banner, the shelves, a game's page; the call and any game waiting to be joined
+//   browse:  open to anyone: the banner, two shelves, every game in a grid, a page for each game
+//   join:    only when Play is pressed: a name and a face, then pairing (play.duoclash.app/#pair/123456
+//            pairs straight away), then the game opens
 //   room:    #room/<id>, the game itself, with the two cameras beside it
 import { call, token } from './api.js';
 import { avatarSVG, AVATARS, face } from './avatar.js';
@@ -92,8 +92,12 @@ function renderNav() {
     : '';
   const them = partner();
   const tools = $('#tools');
-  if (!state.me) {
-    tools.innerHTML = `<a class="chip" href="${APP_STORE}" target="_blank" rel="noopener">${icon('phone')} iPhone app</a>`;
+  if (!state.me || !state.couple) {
+    tools.innerHTML = `<a class="chip quiet" href="${APP_STORE}" target="_blank" rel="noopener">${icon('phone')}<span>iPhone app</span></a>
+      ${state.me ? `<button class="duo-chip" data-menu aria-label="You">${face(state.me, 32)}${icon('down')}</button>` : ''}
+      <button class="btn red" data-start-join>${state.me ? 'Pair with your duo' : 'Get started'}</button>`;
+    $('[data-start-join]', tools).addEventListener('click', () => onboard());
+    $('[data-menu]', tools)?.addEventListener('click', openMenu);
     return;
   }
   const theyreIn = (state.couple?.call ?? []).includes(them?.id);
@@ -112,14 +116,18 @@ document.addEventListener('click', (event) => {
   if (home) {
     event.preventDefault();
     if (location.hash) location.hash = '';
-    else scrollTo({ top: 0, behavior: still ? 'auto' : 'smooth' });
+    else {
+      applyFilter('all');
+      scrollTo({ top: 0, behavior: still ? 'auto' : 'smooth' });
+    }
     return;
   }
   const shelf = event.target.closest('[data-shelf]');
   if (shelf) {
     event.preventDefault();
-    const row = document.getElementById(`shelf-${shelf.dataset.shelf}`);
-    if (row) scrollTo({ top: row.getBoundingClientRect().top + scrollY - 90, behavior: still ? 'auto' : 'smooth' });
+    applyFilter(shelf.dataset.shelf);
+    const library = document.getElementById('library');
+    if (library) scrollTo({ top: library.getBoundingClientRect().top + scrollY - 80, behavior: still ? 'auto' : 'smooth' });
   }
 });
 
@@ -127,118 +135,105 @@ document.addEventListener('click', (event) => {
 
 async function boot() {
   const invite = location.hash.match(/^#pair\/(\d{6})$/)?.[1];
-  if (invite) sessionStorage.setItem('invite', invite);
-  if (!token.get()) return landing();
-  try {
-    applyHome(await call('GET', 'me'));
-  } catch (error) {
-    if (error.status === 401) {
-      token.set(null);
-      return landing();
+  if (invite) {
+    sessionStorage.setItem('invite', invite);
+    history.replaceState(null, '', location.pathname);
+  }
+  if (token.get()) {
+    try {
+      applyHome(await call('GET', 'me'));
+    } catch (error) {
+      if (error.status === 401) token.set(null);
+      else toast(error.message, 'bad');
     }
-    return offline(error);
   }
   route();
+  // Someone's invite link: straight to pairing with it.
+  if (sessionStorage.getItem('invite') && !state.couple) onboard();
 }
 
-function offline(error) {
-  show('plain', `<section class="center"><div class="panel">
-    <div class="glyph">${icon('wifiOff')}</div>
-    <h1>Can’t reach Duo Clash</h1>
-    <p class="dim">${esc(error.message)}</p>
-    <button class="btn play" data-retry>Try again</button>
-  </div></section>`);
-  $('[data-retry]').onclick = boot;
-}
-
-/** Where the address says to be: a room, or the shelves (or pairing first, when there's nobody yet). */
+/** Where the address says to be: a game (for a couple), or the games. Anyone can look around. */
 function route() {
   clearInterval(poll);
   poll = null;
-  if (!state.me) return landing();
-  if (!state.couple) {
-    if (location.hash.startsWith('#room/')) history.replaceState(null, '', location.pathname);
-    return pair();
-  }
   const roomId = location.hash.match(/^#room\/([\w-]+)$/)?.[1];
-  if (roomId) return enterRoom(roomId);
+  if (roomId && state.couple) return enterRoom(roomId);
+  if (roomId) history.replaceState(null, '', location.pathname);
   if (opened) leaveRoom();
   browse();
 }
 
 addEventListener('hashchange', route);
 
-// The wall of posters behind the first pages
+// Getting in: asked only when someone presses Play. A name and a face make the account (no email,
+// no password, like the app), then pairing with a code to give or one to type, then the game opens.
 
-function wall() {
-  const ids = CATALOG.map((g) => g.id);
-  const lane = (offset) => {
-    const run = [...ids.slice(offset), ...ids.slice(0, offset)];
-    return `<div class="lane">${[...run, ...run].map((id) => `<img src="${art(id, 'poster')}" alt="" loading="lazy">`).join('')}</div>`;
-  };
-  return `<div class="wall" aria-hidden="true"><div class="tilt">${lane(0)}${lane(7)}${lane(14)}${lane(21)}</div></div><div class="wall-shade"></div>`;
+const join = $('#join');
+let afterJoin = null;
+let pairPoll = null;
+
+function onboard(next = null) {
+  afterJoin = next;
+  if (!state.me) askName();
+  else if (!state.couple) askPair();
+  if (!join.open) join.showModal();
 }
 
-// Landing: a name, then a face
-
-function landing() {
-  show('landing', `${wall()}
-  <section class="pitch">
-    <p class="kicker"><img src="assets/icon-512.png" alt="">Games for two</p>
-    <h1>Date night,<br>wherever you are.</h1>
-    <p class="lede">Word races, chess, four in a row and more, played face to face on a video call. In your browser, or with someone on the iPhone app.</p>
-    <form class="start" data-name>
-      <label class="float"><input name="name" maxlength="20" autocomplete="nickname" placeholder=" " required value="${esc(state.name)}"><span>Your name</span></label>
-      <button class="btn red big" type="submit">Get started ${icon('next')}</button>
-    </form>
-    <p class="fine">No email, no password. By continuing you agree to the <a href="https://duoclash.app/terms.html">Terms</a> and the <a href="https://duoclash.app/privacy.html">Privacy Policy</a>.</p>
-  </section>
-  <section class="bands">
-    <div class="band"><div><h2>Made for two</h2><p>Every game is one on one. Your faces sit right beside the board, so you see the reaction to every move.</p></div><div class="band-art">${['xox', 'fourRow', 'chess'].map((id) => img(id, 'wide')).join('')}</div></div>
-    <div class="band flip"><div><h2>Laptop, Android or iPhone</h2><p>Pair once with a six-digit code. One of you can be in a browser and the other on the iPhone app.</p></div><div class="band-icons">${icon('monitor')}${icon('phone')}${icon('globe')}</div></div>
-    <div class="band"><div><h2>New games keep coming</h2><p>Words, numbers, memory and strategy. Tell us the game you want next and it might be here next week.</p></div><div class="band-art">${['letterLink', 'guessCelebrity', 'seaBattle'].map((id) => img(id, 'wide')).join('')}</div></div>
-  </section>`);
-  const form = $('[data-name]');
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    state.name = form.name.value.trim();
-    if (state.name) pickFace();
-  });
+function finishJoin() {
+  clearInterval(pairPoll);
+  join.close();
+  if (app.dataset.view === 'browse') browse();
+  const next = afterJoin;
+  afterJoin = null;
+  next?.();
 }
 
-/** The face, picked the way a streaming service has you pick a profile. */
-function pickFace() {
-  show('faces', `<section class="faces-gate">
-    <h1>Pick your face, ${esc(state.name)}</h1>
-    <p class="dim">Your duo sees it next to your name. You can turn your camera on in a game.</p>
+join.addEventListener('close', () => clearInterval(pairPoll));
+join.addEventListener('click', (event) => {
+  if (event.target === join || event.target.closest('[data-x]')) join.close();
+});
+
+function askName() {
+  let avatar = Math.floor(Math.random() * AVATARS);
+  join.innerHTML = `<form class="join-in" data-name>
+    <button type="button" class="circle close" data-x aria-label="Close">${icon('close')}</button>
+    <p class="kicker"><img src="assets/icon-512.png" alt="">Step 1 of 2</p>
+    <h2>Who’s playing?</h2>
+    <p class="dim">A name and a face. No email, no password.</p>
+    <label class="float"><input name="name" maxlength="20" autocomplete="nickname" placeholder=" " required><span>Your name</span></label>
     <div class="face-grid">${Array.from({ length: AVATARS }, (_, i) => `
-      <button class="face-pick" data-avatar="${i}" style="--i:${i}">${avatarSVG(i)}</button>`).join('')}
+      <button type="button" class="face-pick ${i === avatar ? 'on' : ''}" data-avatar="${i}" aria-label="Face ${i + 1}">${avatarSVG(i)}</button>`).join('')}
     </div>
-    <button class="btn ghost" data-back>Change name</button>
-  </section>`);
-  $('[data-back]').onclick = landing;
-  $('.face-grid').addEventListener('click', async (event) => {
+    <button class="btn red wide big" type="submit">Continue ${icon('next')}</button>
+    <p class="fine">By continuing you agree to the <a href="https://duoclash.app/terms.html" target="_blank">Terms</a> and the <a href="https://duoclash.app/privacy.html" target="_blank">Privacy Policy</a>.</p>
+  </form>`;
+  const form = $('[data-name]', join);
+  form.addEventListener('click', (event) => {
     const button = event.target.closest('[data-avatar]');
     if (!button) return;
-    $$('.face-pick').forEach((b) => (b.disabled = true));
-    button.classList.add('chosen');
+    avatar = Number(button.dataset.avatar);
+    $$('[data-avatar]', form).forEach((b) => b.classList.toggle('on', b === button));
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector('[type=submit]');
+    submit.disabled = true;
     try {
-      const made = await call('POST', 'accounts', { name: state.name, avatar: Number(button.dataset.avatar) });
+      const made = await call('POST', 'accounts', { name: form.name.value, avatar });
       token.set(made.token);
       applyHome(await call('GET', 'me'));
-      route();
+      renderNav();
+      if (state.couple) finishJoin();
+      else askPair();
     } catch (error) {
       toast(error.message, 'bad');
-      $$('.face-pick').forEach((b) => (b.disabled = false));
-      button.classList.remove('chosen');
-      if (error.code === 'bad_name' || error.code === 'no_name') landing();
+      submit.disabled = false;
     }
   });
+  setTimeout(() => form.name.focus(), 50);
 }
 
-// Pairing
-
-async function pair() {
+async function askPair() {
   const invite = sessionStorage.getItem('invite');
   if (invite) {
     sessionStorage.removeItem('invite');
@@ -247,8 +242,7 @@ async function pair() {
       applyHome(await call('GET', 'me'));
       if (state.couple) {
         toast(`Paired with ${partner()?.name}. Time to play.`);
-        history.replaceState(null, '', location.pathname);
-        return route();
+        return finishJoin();
       }
     } catch (error) {
       toast(error.message, 'bad');
@@ -258,32 +252,30 @@ async function pair() {
     try {
       state.waiting = (await call('POST', 'groups')).group;
     } catch (error) {
-      return offline(error);
+      toast(error.message, 'bad');
+      return join.close();
     }
   }
   const code = state.waiting.code;
   const link = `${location.origin}${location.pathname}#pair/${code}`;
-  show('pair', `${wall()}
-  <section class="center"><div class="panel pairing">
-    <div class="half">
-      <p class="kicker">${icon('link')} Your code</p>
-      <h1>Send this to your duo</h1>
-      <div class="code" aria-label="Your code ${code}">${[...code].map((d, i) => `<span style="--i:${i}">${d}</span>`).join('')}</div>
-      <p class="dim">They type it in Duo Clash on their iPhone, or open your link in any browser.</p>
-      <div class="row">
-        <button class="btn play" data-copy>${icon('copy')} Copy link</button>
-        ${navigator.share ? `<button class="btn ghost" data-share>Share</button>` : ''}
-      </div>
-      <p class="waiting"><i></i> Waiting for them to pair</p>
+  join.innerHTML = `<div class="join-in pairing">
+    <button type="button" class="circle close" data-x aria-label="Close">${icon('close')}</button>
+    <p class="kicker"><img src="assets/icon-512.png" alt="">Step 2 of 2</p>
+    <h2>Pair with your duo</h2>
+    <p class="dim">Send them your code. They type it in Duo Clash on their iPhone, or open your link in any browser.</p>
+    <div class="code" aria-label="Your code ${code}">${[...code].map((d, i) => `<span style="--i:${i}">${d}</span>`).join('')}</div>
+    <div class="row left">
+      <button class="btn play" data-copy>${icon('copy')} Copy link</button>
+      ${navigator.share ? `<button class="btn ghost" data-share>Share</button>` : ''}
+      <span class="waiting"><i></i> Waiting for them</span>
     </div>
-    <form class="half other" data-join>
-      <p class="kicker">${icon('check')} Got their code?</p>
-      <h2>Type it here</h2>
-      <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" class="code-input" required>
-      <button class="btn red wide" type="submit">Pair</button>
+    <form class="their" data-join>
+      <span class="or">Got their code instead?</span>
+      <div class="row left"><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" class="code-input" required>
+      <button class="btn red" type="submit">Pair</button></div>
     </form>
-  </div></section>`);
-  $('[data-copy]').onclick = async () => {
+  </div>`;
+  $('[data-copy]', join).onclick = async () => {
     try {
       await navigator.clipboard.writeText(link);
       toast('Link copied. Send it to your duo.');
@@ -291,8 +283,8 @@ async function pair() {
       toast(link);
     }
   };
-  $('[data-share]')?.addEventListener('click', () => navigator.share({ title: 'Duo Clash', text: `Pair with me on Duo Clash: ${code}`, url: link }).catch(() => {}));
-  const form = $('[data-join]');
+  $('[data-share]', join)?.addEventListener('click', () => navigator.share({ title: 'Duo Clash', text: `Pair with me on Duo Clash: ${code}`, url: link }).catch(() => {}));
+  const form = $('[data-join]', join);
   form.code.addEventListener('input', () => (form.code.value = form.code.value.replace(/\D/g, '').slice(0, 6)));
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -300,24 +292,25 @@ async function pair() {
       await call('POST', 'groups/join', { code: form.code.value });
       applyHome(await call('GET', 'me'));
       toast(`Paired with ${partner()?.name}. Time to play.`);
-      route();
+      finishJoin();
     } catch (error) {
       toast(error.message, 'bad');
     }
   });
   // The other side pairing with this code shows up here.
-  poll = setInterval(async () => {
+  clearInterval(pairPoll);
+  pairPoll = setInterval(async () => {
     try {
       applyHome(await call('GET', 'me'));
       if (state.couple) {
         toast(`${partner()?.name} paired with you. Time to play.`);
-        route();
+        finishJoin();
       }
     } catch {}
   }, 3000);
 }
 
-// Browsing: the banner and the shelves
+// Browsing: the banner, two shelves, and every game in a grid
 
 function card(g, { numbered = 0 } = {}) {
   const here = Boolean(PLAYABLE[g.id]);
@@ -327,8 +320,8 @@ function card(g, { numbered = 0 } = {}) {
       ${img(g.id, 'poster', 'loading="lazy"')}
     </article>`;
   }
-  return `<article class="card" data-detail="${g.id}" tabindex="0">
-    <div class="shot">${img(g.id, 'wide', 'loading="lazy"')}<span class="name">${esc(g.title)}</span>${here ? '' : `<span class="flag">${icon('phone')}iPhone</span>`}</div>
+  return `<article class="card" data-detail="${g.id}" data-cat="${g.category}" data-here="${here}" tabindex="0">
+    <div class="shot">${img(g.id, 'wide', 'loading="lazy"')}<span class="name">${esc(g.title)}</span>${here ? `<span class="flag go">${icon('play')}Play now</span>` : `<span class="flag">${icon('phone')}iPhone</span>`}</div>
     <div class="pop">
       <div class="acts">
         ${here ? `<button class="circle white" data-play="${g.id}" aria-label="Play ${esc(g.title)}">${icon('play')}</button>` : `<span class="circle dim-circle" title="On the iPhone app">${icon('phone')}</span>`}
@@ -352,10 +345,14 @@ function shelf(id, title, games, options = {}) {
   </section>`;
 }
 
+let filter = 'all';
+
 function browse() {
   const them = partner();
   const playable = CATALOG.filter((g) => PLAYABLE[g.id]);
   const featured = [...playable, ...['guessCelebrity', 'chess', 'letterLink'].map(game).filter(Boolean)];
+  const note = them ? `${esc(them.name)} gets a notification and joins you` : 'Free, no download. Pair once and play together';
+  const filters = [{ id: 'all', title: 'All games' }, { id: 'here', title: 'Plays in browser' }, ...SHELVES];
   show('browse', `
   <section class="billboard" data-billboard>
     <div class="bb-art">${featured.map((g, i) => `<div class="slide ${i === 0 ? 'on' : ''}" data-slide-id="${g.id}"><picture><source media="(max-width: 800px)" srcset="${art(g.id, 'poster')}">${img(g.id, 'billboard')}</picture></div>`).join('')}</div>
@@ -365,9 +362,15 @@ function browse() {
   </section>
   <div class="shelves">
     <div data-waiting></div>
-    ${shelf('web', 'Play now in your browser', playable, { note: `${esc(them?.name)} gets a notification and joins you` })}
+    ${shelf('web', 'Play now in your browser', playable, { note })}
     ${shelf('start', 'Start here tonight', START_HERE.map(game).filter(Boolean), { numbered: true })}
-    ${SHELVES.map((s) => shelf(s.id, s.title, CATALOG.filter((g) => g.category === s.id))).join('')}
+    <section class="library" id="library">
+      <div class="library-head">
+        <h2>All games <small>${CATALOG.length}</small></h2>
+        <div class="filters">${filters.map((f) => `<button class="filter ${f.id === filter ? 'on' : ''}" data-filter="${f.id}">${f.title}</button>`).join('')}</div>
+      </div>
+      <div class="grid" data-grid>${CATALOG.map((g) => card(g)).join('')}</div>
+    </section>
     <section class="ask">
       <div><h2>What should we make next?</h2><p class="dim">New games land every week. Tell us the one you two want.</p></div>
       <a class="btn play" href="mailto:support@duoclash.app?subject=Game%20idea%20for%20Duo%20Clash">Suggest a game</a>
@@ -379,8 +382,22 @@ function browse() {
   </footer>`);
   billboard(featured);
   sliders();
+  applyFilter(filter);
+  $$('[data-filter]').forEach((button) => (button.onclick = () => applyFilter(button.dataset.filter)));
   renderWaiting();
-  poll = setInterval(refreshCouple, 3000);
+  if (state.couple) poll = setInterval(refreshCouple, 3000);
+}
+
+/** The grid shows one kind of game, or all of them; the bar's links pick one too. */
+function applyFilter(id) {
+  filter = id;
+  $$('[data-filter]').forEach((button) => button.classList.toggle('on', button.dataset.filter === id));
+  $$('#links [data-shelf]').forEach((link) => link.classList.toggle('on', link.dataset.shelf === id));
+  $('#links [data-go-home]')?.classList.toggle('on', id === 'all');
+  $$('[data-grid] .card').forEach((cardEl) => {
+    const shown = id === 'all' || (id === 'here' ? cardEl.dataset.here === 'true' : cardEl.dataset.cat === id);
+    cardEl.hidden = !shown;
+  });
 }
 
 /** The banner: one game at a time, a new one every few seconds until someone picks. */
@@ -526,6 +543,7 @@ async function refreshCouple() {
 function renderWaiting() {
   const box = $('[data-waiting]');
   if (!box) return;
+  if (!state.couple) return void (box.innerHTML = '');
   const them = partner();
   const open = (state.couple.rooms ?? []).filter((room) => room.phase !== 'finished');
   if (!open.length) {
@@ -551,6 +569,7 @@ function renderWaiting() {
 
 async function openRoom(id, button) {
   if (!PLAYABLE[id]) return openDetail(id);
+  if (!state.couple) return onboard(() => openRoom(id));
   if (button) button.disabled = true;
   try {
     const { room } = await call('POST', `groups/${state.couple.id}/rooms`, { game: id, seats: 2, language: language() });
@@ -805,7 +824,7 @@ function openMenu() {
       Object.assign(state, { me: null, couple: null, waiting: null, name: '' });
       menu.close();
       location.hash = '';
-      landing();
+      browse();
     } catch (error) {
       toast(error.message, 'bad');
     }
