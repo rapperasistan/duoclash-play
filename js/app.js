@@ -1,7 +1,6 @@
-// Duo Clash on the web (play.duoclash.app): every game laid out like a streaming service's shelves,
-// with the same accounts, couples, rooms and video call as the iPhone app, so a couple can play with
-// one on a laptop or an Android phone and the other on an iPhone.
-//   browse:  open to anyone: the banner, two shelves, every game in a grid, a page for each game
+// Duo Clash on the web (play.duoclash.app): the two of you and every game, with the same accounts,
+// couples, rooms and video call as the iPhone app, so either of you can play from a browser.
+//   browse:  open to anyone: the two of you this week at the top, every game below, a page for each
 //   join:    only when Play is pressed: a name and a face, then pairing (play.duoclash.app/#pair/123456
 //            pairs straight away), then the game opens
 //   room:    #room/<id>, the game itself, with the two cameras beside it
@@ -22,9 +21,6 @@ const SHELVES = [
   { id: 'memory', title: 'Memory & speed' },
   { id: 'logic', title: 'Strategy' },
 ];
-// The numbered shelf: where to start on a first night.
-const START_HERE = ['xox', 'fourRow', 'guessCelebrity', 'chess', 'crackTheCode'];
-const APP_STORE = 'https://apps.apple.com/app/id6820255172';
 
 const game = (id) => CATALOG.find((g) => g.id === id);
 const gameTitle = (id) => game(id)?.title ?? 'A game';
@@ -48,7 +44,6 @@ const session = new Call();
 const line = new RoomLine();
 let poll = null;
 let tick = null;
-let rotate = null;
 let before = null; // the room as it was before its last change, for what's new on the board
 let opened = null; // the room whose line is open
 
@@ -63,7 +58,6 @@ function toast(text, kind = '') {
 }
 
 function show(name, html) {
-  clearInterval(rotate);
   app.dataset.view = name;
   view.innerHTML = html;
   scrollTo(0, 0);
@@ -93,21 +87,13 @@ function renderNav() {
   const them = partner();
   const tools = $('#tools');
   if (!state.me || !state.couple) {
-    tools.innerHTML = `<a class="chip quiet" href="${APP_STORE}" target="_blank" rel="noopener">${icon('phone')}<span>iPhone app</span></a>
-      ${state.me ? `<button class="duo-chip" data-menu aria-label="You">${face(state.me, 32)}${icon('down')}</button>` : ''}
-      <button class="btn red" data-start-join>${state.me ? 'Pair with your duo' : 'Get started'}</button>`;
+    tools.innerHTML = `${state.me ? `<button class="duo-chip" data-menu aria-label="You">${face(state.me, 32)}${icon('down')}</button>` : ''}
+      <button class="btn red" data-start-join>${state.me ? 'Pair now' : 'Get started'}</button>`;
     $('[data-start-join]', tools).addEventListener('click', () => onboard());
     $('[data-menu]', tools)?.addEventListener('click', openMenu);
     return;
   }
-  const theyreIn = (state.couple?.call ?? []).includes(them?.id);
-  const callButton = !state.couple ? ''
-    : session.on ? `<button class="chip live" data-hang-top>${icon('hangUp')}<span>End call</span></button>`
-    : `<button class="chip ${theyreIn ? 'ring' : ''}" data-ring>${icon('video')}<span>${theyreIn ? `Join ${esc(them?.name)}` : 'Video call'}</span></button>`;
-  tools.innerHTML = `${callButton}
-    <button class="duo-chip" data-menu aria-label="You and your duo">${face(state.me, 32)}${them ? face(them, 32) : ''}${icon('down')}</button>`;
-  $('[data-ring]', tools)?.addEventListener('click', () => session.start(state.couple.id, { ring: !theyreIn }));
-  $('[data-hang-top]', tools)?.addEventListener('click', () => session.hangUp());
+  tools.innerHTML = `<button class="duo-chip" data-menu aria-label="You and ${esc(them?.name)}">${face(state.me, 32)}${face(them, 32)}${icon('down')}</button>`;
   $('[data-menu]', tools).addEventListener('click', openMenu);
 }
 
@@ -261,8 +247,8 @@ async function askPair() {
   join.innerHTML = `<div class="join-in pairing">
     <button type="button" class="circle close" data-x aria-label="Close">${icon('close')}</button>
     <p class="kicker"><img src="assets/icon-512.png" alt="">Step 2 of 2</p>
-    <h2>Pair with your duo</h2>
-    <p class="dim">Send them your code. They type it in Duo Clash on their iPhone, or open your link in any browser.</p>
+    <h2>Who are you playing with?</h2>
+    <p class="dim">Send them your link, or read them the code. As soon as they’re in, this becomes your space.</p>
     <div class="code" aria-label="Your code ${code}">${[...code].map((d, i) => `<span style="--i:${i}">${d}</span>`).join('')}</div>
     <div class="row left">
       <button class="btn play" data-copy>${icon('copy')} Copy link</button>
@@ -278,7 +264,7 @@ async function askPair() {
   $('[data-copy]', join).onclick = async () => {
     try {
       await navigator.clipboard.writeText(link);
-      toast('Link copied. Send it to your duo.');
+      toast('Link copied. Send it their way.');
     } catch {
       toast(link);
     }
@@ -310,81 +296,54 @@ async function askPair() {
   }, 3000);
 }
 
-// Browsing: the banner, two shelves, and every game in a grid
+// Browsing: the two of you at the top, then every game
 
-function card(g, { numbered = 0 } = {}) {
+const ago = (at) => {
+  const minutes = Math.round((Date.now() - at) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
+};
+
+function card(g) {
   const here = Boolean(PLAYABLE[g.id]);
-  if (numbered) {
-    return `<article class="card top" data-detail="${g.id}" tabindex="0" style="--i:${numbered}">
-      <svg class="rank" viewBox="0 0 120 160" aria-hidden="true"><text x="118" y="150" text-anchor="end">${numbered}</text></svg>
-      ${img(g.id, 'poster', 'loading="lazy"')}
-    </article>`;
-  }
-  return `<article class="card" data-detail="${g.id}" data-cat="${g.category}" data-here="${here}" tabindex="0">
-    <div class="shot">${img(g.id, 'wide', 'loading="lazy"')}<span class="name">${esc(g.title)}</span>${here ? `<span class="flag go">${icon('play')}Play now</span>` : `<span class="flag">${icon('phone')}iPhone</span>`}</div>
-    <div class="pop">
-      <div class="acts">
-        ${here ? `<button class="circle white" data-play="${g.id}" aria-label="Play ${esc(g.title)}">${icon('play')}</button>` : `<span class="circle dim-circle" title="On the iPhone app">${icon('phone')}</span>`}
-        <button class="circle" data-detail="${g.id}" aria-label="How to play ${esc(g.title)}">${icon('down')}</button>
-      </div>
-      <p class="meta">${here ? '<b class="go">Plays here</b>' : '<b>iPhone app</b>'}<span class="box">2 players</span></p>
-      <p class="tags">${esc(g.kind)} <i></i> ${esc(shelfTitle(g.category))}</p>
-    </div>
+  return `<article class="card ${here ? 'here' : 'soon'}" data-detail="${g.id}" data-cat="${g.category}" data-here="${here}" tabindex="0">
+    ${img(g.id, 'poster', 'loading="lazy"')}
+    ${here ? '' : '<span class="soon-tag">Soon</span>'}
+    <div class="cap"><b>${esc(g.title)}</b><small>${esc(g.kind)}</small></div>
+    ${here ? `<button class="play-dot" data-play="${g.id}" aria-label="Play ${esc(g.title)}">${icon('play')}</button>` : ''}
   </article>`;
-}
-
-function shelf(id, title, games, options = {}) {
-  if (!games.length) return '';
-  return `<section class="shelf ${options.numbered ? 'numbered' : ''}" id="shelf-${id}">
-    <h2>${title}${options.note ? `<small>${options.note}</small>` : ''}</h2>
-    <div class="slider">
-      <button class="handle prev" data-slide="-1" aria-label="Back">${icon('back')}</button>
-      <div class="track">${games.map((g, i) => card(g, { numbered: options.numbered ? i + 1 : 0 })).join('')}</div>
-      <button class="handle next" data-slide="1" aria-label="More">${icon('next')}</button>
-    </div>
-  </section>`;
 }
 
 let filter = 'all';
 
 function browse() {
-  const them = partner();
-  const playable = CATALOG.filter((g) => PLAYABLE[g.id]);
-  const featured = [...playable, ...['guessCelebrity', 'chess', 'letterLink'].map(game).filter(Boolean)];
-  const note = them ? `${esc(them.name)} gets a notification and joins you` : 'Free, no download. Pair once and play together';
-  const filters = [{ id: 'all', title: 'All games' }, { id: 'here', title: 'Plays in browser' }, ...SHELVES];
+  // The ones that play here first, then the rest as they come.
+  const games = [...CATALOG.filter((g) => PLAYABLE[g.id]), ...CATALOG.filter((g) => !PLAYABLE[g.id])];
+  const filters = [{ id: 'all', title: 'All games' }, { id: 'here', title: 'Play now' }, ...SHELVES];
   show('browse', `
-  <section class="billboard" data-billboard>
-    <div class="bb-art">${featured.map((g, i) => `<div class="slide ${i === 0 ? 'on' : ''}" data-slide-id="${g.id}"><picture><source media="(max-width: 800px)" srcset="${art(g.id, 'poster')}">${img(g.id, 'billboard')}</picture></div>`).join('')}</div>
-    <div class="bb-shade"></div>
-    <div class="bb-copy" data-bb-copy></div>
-    <div class="bb-dots">${featured.map((g, i) => `<button class="${i === 0 ? 'on' : ''}" data-bb="${i}" aria-label="${esc(g.title)}"></button>`).join('')}</div>
+  <section class="duo-head" data-head></section>
+  <section class="library" id="library">
+    <div class="library-head">
+      <h2>Games</h2>
+      <div class="filters">${filters.map((f) => `<button class="filter ${f.id === filter ? 'on' : ''}" data-filter="${f.id}">${f.title}</button>`).join('')}</div>
+    </div>
+    <div class="grid" data-grid>${games.map(card).join('')}</div>
   </section>
-  <div class="shelves">
-    <div data-waiting></div>
-    ${shelf('web', 'Play now in your browser', playable, { note })}
-    ${shelf('start', 'Start here tonight', START_HERE.map(game).filter(Boolean), { numbered: true })}
-    <section class="library" id="library">
-      <div class="library-head">
-        <h2>All games <small>${CATALOG.length}</small></h2>
-        <div class="filters">${filters.map((f) => `<button class="filter ${f.id === filter ? 'on' : ''}" data-filter="${f.id}">${f.title}</button>`).join('')}</div>
-      </div>
-      <div class="grid" data-grid>${CATALOG.map((g) => card(g)).join('')}</div>
-    </section>
-    <section class="ask">
-      <div><h2>What should we make next?</h2><p class="dim">New games land every week. Tell us the one you two want.</p></div>
-      <a class="btn play" href="mailto:support@duoclash.app?subject=Game%20idea%20for%20Duo%20Clash">Suggest a game</a>
-    </section>
-  </div>
+  <section class="ask">
+    <div><h2>What should we make next?</h2><p class="dim">New games land every week. Tell us the one you two want.</p></div>
+    <a class="btn play" href="mailto:support@duoclash.app?subject=Game%20idea%20for%20Duo%20Clash">Suggest a game</a>
+  </section>
   <footer class="foot">
     <a href="https://duoclash.app">About Duo Clash</a><a href="https://duoclash.app/privacy.html">Privacy</a><a href="https://duoclash.app/terms.html">Terms</a><a href="https://duoclash.app/support.html">Support</a>
     <span>© 2026 Duo Clash</span>
   </footer>`);
-  billboard(featured);
-  sliders();
+  renderHead();
   applyFilter(filter);
   $$('[data-filter]').forEach((button) => (button.onclick = () => applyFilter(button.dataset.filter)));
-  renderWaiting();
   if (state.couple) poll = setInterval(refreshCouple, 3000);
 }
 
@@ -395,71 +354,145 @@ function applyFilter(id) {
   $$('#links [data-shelf]').forEach((link) => link.classList.toggle('on', link.dataset.shelf === id));
   $('#links [data-go-home]')?.classList.toggle('on', id === 'all');
   $$('[data-grid] .card').forEach((cardEl) => {
-    const shown = id === 'all' || (id === 'here' ? cardEl.dataset.here === 'true' : cardEl.dataset.cat === id);
-    cardEl.hidden = !shown;
+    cardEl.hidden = !(id === 'all' || (id === 'here' ? cardEl.dataset.here === 'true' : cardEl.dataset.cat === id));
   });
 }
 
-/** The banner: one game at a time, a new one every few seconds until someone picks. */
-function billboard(featured) {
-  let at = 0;
-  const copy = $('[data-bb-copy]');
-  const paint = () => {
-    const g = featured[at];
-    const here = Boolean(PLAYABLE[g.id]);
-    copy.innerHTML = `<div class="bb-in">
-      <p class="kicker"><img src="assets/icon-512.png" alt="">${here ? 'Plays in your browser' : 'On the iPhone app'}</p>
-      <h1>${esc(g.title)}</h1>
-      <p class="meta">${here ? '<b class="go">New on the web</b>' : ''}<span>${esc(g.kind)}</span><span class="box">2 players</span><span>${esc(shelfTitle(g.category))}</span></p>
-      <p class="how">${esc(g.how)}</p>
-      <div class="acts">
-        ${here ? `<button class="btn play big" data-play="${g.id}">${icon('play')} Play</button>` : ''}
-        <button class="btn glass big" data-detail="${g.id}">${icon('info')} ${here ? 'How to play' : 'More info'}</button>
+// What a guest (or someone not paired yet) sees at the top: a made-up couple's week, said to be one.
+const HOUR = 3600000;
+const SAMPLE = {
+  me: { id: 'sample-leo', name: 'Leo', avatar: 3 },
+  them: { id: 'sample-mia', name: 'Mia', avatar: 4 },
+  points: { 'sample-leo': 9, 'sample-mia': 12 },
+  matches: [
+    { game: 'xox', winner: 'sample-leo', scores: { 'sample-leo': 3, 'sample-mia': 1 }, ago: 2 * HOUR },
+    { game: 'fourRow', winner: 'sample-mia', scores: { 'sample-leo': 2, 'sample-mia': 3 }, ago: 5 * HOUR },
+    { game: 'guessCelebrity', winner: null, scores: { 'sample-leo': 2, 'sample-mia': 2 }, ago: 26 * HOUR },
+    { game: 'chess', winner: 'sample-mia', scores: { 'sample-leo': 0, 'sample-mia': 1 }, ago: 50 * HOUR },
+  ],
+  owed: [{ id: 'sample', text: 'Breakfast in bed', winner: 'sample-mia' }],
+};
+
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 5 ? 'Up late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+}
+
+/** "3d 4h left", like the app. */
+function timeLeft(endsAt) {
+  const minutes = Math.max(1, Math.floor((endsAt - Date.now()) / 60000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  return days ? `${days}d ${hours}h left` : `${hours}h ${minutes % 60}m left`;
+}
+
+/** Next Monday, 00:00 UTC, when the server starts a new week. */
+function nextMonday() {
+  const now = new Date();
+  const monday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - ((now.getUTCDay() + 6) % 7));
+  return monday + 7 * 86400000;
+}
+
+/**
+ * The top of the page is the couple's own space: the two of them by name, this week's podium the way
+ * the app has it (the leader in the middle under a crown), and the games they've played lately with
+ * any stakes still owed. Before there's a couple, a made-up one shows how it looks, and says so.
+ */
+function renderHead() {
+  const box = $('[data-head]');
+  if (!box) return;
+  const real = Boolean(state.couple);
+  const couple = state.couple;
+  const me = real ? state.me : SAMPLE.me;
+  const them = real ? partner() : SAMPLE.them;
+  const points = (id) => (real ? couple.board?.find((row) => row.id === id)?.points ?? 0 : SAMPLE.points[id]);
+  // In your own space you're "You"; in the made-up one everyone has a name.
+  const called = (person) => (real && person.id === me.id ? 'You' : esc(person.name));
+  const people = [me, them].filter(Boolean).map((person) => ({ person, points: points(person.id) }));
+  people.forEach((entry) => (entry.rank = 1 + people.filter((other) => other.points > entry.points).length));
+  const started = people.some((entry) => entry.points > 0);
+  // Second on the left, first in the middle (with two, that's the right).
+  const podium = [...people].sort((a, b) => a.rank - b.rank || (a.person.id === me.id ? 1 : -1)).reverse();
+  const endsAt = real ? couple.weekEndsAt : nextMonday();
+  const matches = real ? (couple.matches ?? []).slice(0, 4) : SAMPLE.matches.map((match) => ({ ...match, at: Date.now() - match.ago }));
+  const owed = real ? (couple.owed ?? []).slice(0, 2) : SAMPLE.owed;
+  const waiting = real ? (couple.rooms ?? []).filter((room) => room.phase !== 'finished' && PLAYABLE[room.game]) : [];
+  const theyreIn = real && (couple.call ?? []).includes(them?.id);
+
+  const step = ({ person, points: score, rank }) => `<div class="step r${rank}">
+    ${rank === 1 ? `<span class="crown">${icon('crown')}</span>` : ''}
+    <span class="ring">${face(person, rank === 1 ? 76 : 60)}<i class="medal">${rank}</i></span>
+    <b>${called(person)}</b>
+    <span class="block"><strong>${score}</strong><small>pts</small></span>
+  </div>`;
+
+  // Before pairing, the bar's button is the way in.
+  const act = !real ? ''
+    : session.on ? `<button class="btn ghost" data-hang-call>${icon('hangUp')} End call</button>`
+    : `<button class="btn ${theyreIn ? 'play ring-call' : 'ghost'}" data-call>${icon('video')} ${theyreIn ? `Join ${esc(them.name)}` : `Call ${esc(them.name)}`}</button>`;
+
+  box.innerHTML = `
+    <div class="space-top">
+      <div class="pair-faces">${face(me, 54)}<span class="heart">${icon('heart')}</span>${face(them, 54)}</div>
+      <div class="hello">
+        <small>${state.me ? `${greeting()}, ${esc(state.me.name)}` : 'Games for two, on a video call'}</small>
+        <h1>${real ? `${esc(me.name)} &amp; ${esc(them.name)}` : state.me ? `${esc(state.me.name)} &amp; …` : 'Leo &amp; Mia'}</h1>
+      </div>
+      <div class="space-acts">
+        ${real ? '' : `<span class="sample-note">${icon('info')} ${state.me ? 'A sample couple. Your own week shows up here once you pair.' : 'A sample couple. Yours shows up here once you pair.'}</span>`}
+        ${act}
+      </div>
+    </div>
+    ${waiting.map((room) => {
+      const host = room.players.find((player) => player.id === room.host);
+      const yours = room.host === me.id;
+      return `<button class="waiting-bar" data-join="${room.id}">${img(room.game, 'square')}
+        <span><b>${yours ? `Your ${esc(gameTitle(room.game))} is still open` : `${esc(host?.name ?? them.name)} is waiting for you in ${esc(gameTitle(room.game))}`}</b><small>${room.phase === 'lobby' ? 'In the lobby' : 'Under way'}</small></span>
+        <span class="btn play">${icon('play')} ${yours ? 'Back in' : 'Join'}</span></button>`;
+    }).join('')}
+    <div class="space-grid">
+      <div class="week-board">
+        <div class="board-head"><span class="trophy">${icon('trophy')}</span><h2>This week</h2><span class="left">${icon('clock')} ${timeLeft(endsAt)}</span></div>
+        ${started ? `<div class="podium">${podium.map(step).join('')}</div>`
+          : `<div class="nobody"><span class="crown big">${icon('crown')}</span><h3>Up for grabs</h3><p>Win a game this week to take the crown.</p></div>`}
+      </div>
+      <div class="lately">
+        <div class="board-head"><h2>Lately</h2></div>
+        ${matches.length ? `<ol>${matches.map((match) => {
+          const winner = match.winner === me.id ? me : match.winner === them?.id ? them : null;
+          const a = match.scores?.[me.id] ?? 0;
+          const b = match.scores?.[them?.id] ?? 0;
+          const score = winner === them ? `${b}–${a}` : `${a}–${b}`;
+          return `<li>${img(match.game, 'square', 'loading="lazy"')}
+            <span class="what"><b>${esc(gameTitle(match.game))}</b><small>${ago(match.at)}</small></span>
+            <span class="who-won ${winner ? (winner === me ? 'me' : 'them') : 'tie'}">${winner ? `${face(winner, 22)}${called(winner)} won` : 'A tie'} <i>${score}</i></span>
+          </li>`;
+        }).join('')}</ol>` : `<p class="quiet">Nothing played yet this week. Your first game will show up here.</p>`}
+        ${owed.map((item) => {
+          const winner = item.winner === me.id ? me : them;
+          const loser = winner === me ? them : me;
+          return `<div class="ticket"><span class="pin">${icon('flag')}</span>
+            <span><small>${called(loser)} ${real && loser === me ? 'owe' : 'owes'} ${real && winner === me ? 'you' : esc(winner.name)}</small><b>${esc(item.text)}</b></span>
+            ${real && winner === me ? `<button class="btn ghost small" data-paid="${item.id}">Paid</button>` : ''}
+          </div>`;
+        }).join('')}
       </div>
     </div>`;
-    $$('.bb-art .slide').forEach((slide, i) => slide.classList.toggle('on', i === at));
-    $$('[data-bb]').forEach((dot, i) => dot.classList.toggle('on', i === at));
-  };
-  const go = (to) => {
-    at = (to + featured.length) % featured.length;
-    paint();
-  };
-  paint();
-  $$('[data-bb]').forEach((dot) => (dot.onclick = () => {
-    clearInterval(rotate);
-    go(Number(dot.dataset.bb));
+  $$('[data-join]', box).forEach((button) => (button.onclick = () => (location.hash = `#room/${button.dataset.join}`)));
+  $$('[data-start-join]', box).forEach((button) => (button.onclick = () => onboard()));
+  $('[data-call]', box)?.addEventListener('click', () => session.start(couple.id, { ring: !theyreIn }));
+  $('[data-hang-call]', box)?.addEventListener('click', () => session.hangUp());
+  $$('[data-paid]', box).forEach((button) => (button.onclick = async () => {
+    try {
+      state.couple = (await call('POST', `groups/${couple.id}/paid`, { stakes: button.dataset.paid })).group;
+      renderHead();
+    } catch (error) {
+      toast(error.message, 'bad');
+    }
   }));
-  if (!still) rotate = setInterval(() => !detail.open && document.visibilityState === 'visible' && go(at + 1), 9000);
 }
 
-/** A shelf slides a screenful at a time with its arrows, eased; a trackpad or a finger moves it too. */
-function sliders() {
-  $$('.slider').forEach((slider) => {
-    const track = $('.track', slider);
-    const handles = () => {
-      const max = track.scrollWidth - track.clientWidth - 2;
-      slider.classList.toggle('at-start', track.scrollLeft <= 2);
-      slider.classList.toggle('at-end', track.scrollLeft >= max);
-    };
-    track.addEventListener('scroll', handles, { passive: true });
-    handles();
-    $$('[data-slide]', slider).forEach((button) => (button.onclick = () => {
-      const from = track.scrollLeft;
-      const to = Math.max(0, Math.min(track.scrollWidth - track.clientWidth, from + Number(button.dataset.slide) * track.clientWidth * 0.9));
-      if (still) return void (track.scrollLeft = to);
-      const t0 = performance.now();
-      const step = (now) => {
-        const t = Math.min(1, (now - t0) / 700);
-        track.scrollLeft = from + (to - from) * (1 - Math.pow(1 - t, 4));
-        if (t < 1) requestAnimationFrame(step);
-      };
-      requestAnimationFrame(step);
-    }));
-  });
-  addEventListener('resize', () => $$('.track').forEach((track) => track.dispatchEvent(new Event('scroll'))));
-}
-
-// Clicks on the shelves and the banner: play straight away, or open a game's page.
+// Clicks on the games: play straight away, or open a game's page.
 view.addEventListener('click', (event) => {
   const play = event.target.closest('[data-play]');
   if (play) {
@@ -478,28 +511,28 @@ function openDetail(id) {
   const g = game(id);
   if (!g) return;
   const here = Boolean(PLAYABLE[id]);
-  const alike = CATALOG.filter((other) => other.category === g.category && other.id !== id).slice(0, 6);
+  const alike = CATALOG.filter((other) => other.category === g.category && other.id !== id).slice(0, 5);
   detail.innerHTML = `<div class="sheet-in">
     <div class="hero">${img(id, 'billboard')}<div class="fade"></div>
       <button class="circle close" data-close aria-label="Close">${icon('close')}</button>
       <div class="hero-copy"><h1>${esc(g.title)}</h1>
-        <div class="acts">${here ? `<button class="btn play big" data-play-detail="${id}">${icon('play')} Play</button>` : `<a class="btn glass big" href="${APP_STORE}" target="_blank" rel="noopener">${icon('phone')} Play on iPhone</a>`}</div>
+        <div class="acts">${here ? `<button class="btn play big" data-play-detail="${id}">${icon('play')} Play</button>` : `<span class="btn glass big soon-btn">Coming soon</span>`}</div>
       </div>
     </div>
     <div class="body">
       <div>
-        <p class="meta">${here ? '<b class="go">Plays in your browser</b>' : '<b>Coming to the web</b>'}<span class="box">2 players</span><span>${esc(g.kind)}</span></p>
+        <p class="meta">${here ? '<b class="go">Ready to play</b>' : '<b>Coming soon</b>'}<span class="box">2 players</span><span>${esc(g.kind)}</span></p>
         <h3>How to play</h3>
         <p class="how">${esc(g.how)}</p>
       </div>
       <dl>
         <dt>Category</dt><dd>${esc(shelfTitle(g.category))}</dd>
         <dt>Languages</dt><dd>${esc(g.language)}</dd>
-        <dt>Where</dt><dd>${here ? 'Browser and iPhone app, together' : 'iPhone app for now'}</dd>
+        <dt>Players</dt><dd>The two of you, on a video call</dd>
       </dl>
     </div>
     ${alike.length ? `<h3 class="alike-title">More like this</h3><div class="alike">${alike.map((other) => `
-      <button class="alike-card" data-other="${other.id}">${img(other.id, 'wide', 'loading="lazy"')}<span><b>${esc(other.title)}</b><small>${PLAYABLE[other.id] ? 'Plays here' : 'iPhone app'} · ${esc(other.kind)}</small></span></button>`).join('')}</div>` : ''}
+      <button class="alike-card" data-other="${other.id}">${img(other.id, 'poster', 'loading="lazy"')}<span><b>${esc(other.title)}</b><small>${PLAYABLE[other.id] ? 'Ready to play' : 'Coming soon'}</small></span></button>`).join('')}</div>` : ''}
   </div>`;
   if (!detail.open) detail.showModal();
   detail.scrollTop = 0;
@@ -511,6 +544,8 @@ function openDetail(id) {
   $$('[data-other]', detail).forEach((button) => (button.onclick = () => openDetail(button.dataset.other)));
 }
 detail.addEventListener('click', (event) => event.target === detail && detail.close());
+
+let lastSeen = '';
 
 async function refreshCouple() {
   if (!state.couple) return;
@@ -524,8 +559,12 @@ async function refreshCouple() {
       toast(`${partner()?.name} opened ${gameTitle(fresh.game)}. Join them.`);
       document.title = `${partner()?.name} opened ${gameTitle(fresh.game)} · Duo Clash`;
     }
-    if (app.dataset.view === 'browse') {
-      renderWaiting();
+    // Only what changed is drawn again, and without the entrance it had the first time.
+    const seen = JSON.stringify([group.board, group.matches?.slice(0, 4), group.owed, group.call, (group.rooms ?? []).map((room) => [room.id, room.phase])]);
+    if (app.dataset.view === 'browse' && seen !== lastSeen) {
+      lastSeen = seen;
+      $('[data-head]')?.classList.add('calm');
+      renderHead();
       renderNav();
     }
   } catch (error) {
@@ -537,34 +576,6 @@ async function refreshCouple() {
       route();
     }
   }
-}
-
-/** Games open in the couple, like a streaming service's "continue watching". */
-function renderWaiting() {
-  const box = $('[data-waiting]');
-  if (!box) return;
-  if (!state.couple) return void (box.innerHTML = '');
-  const them = partner();
-  const open = (state.couple.rooms ?? []).filter((room) => room.phase !== 'finished');
-  if (!open.length) {
-    box.innerHTML = '';
-    return;
-  }
-  box.innerHTML = `<section class="shelf waiting-shelf"><h2>${open.some((room) => room.host !== state.me.id) ? `${esc(them?.name)} is waiting` : 'Continue playing'}</h2>
-    <div class="slider"><div class="track">${open.map((room) => {
-      const host = room.players.find((player) => player.id === room.host);
-      const mine = room.host === state.me.id;
-      const can = Boolean(PLAYABLE[room.game]);
-      const scores = room.players.map((player) => player.score ?? 0);
-      const progress = room.target ? Math.min(1, Math.max(...scores, 0) / room.target) : room.phase === 'lobby' ? 0.04 : 0.5;
-      return `<article class="card waiting-card ${can ? '' : 'off'}" ${can ? `data-join="${room.id}"` : ''} tabindex="0">
-        <div class="shot">${img(room.game, 'wide')}<span class="name">${esc(gameTitle(room.game))}</span>
-          ${can ? `<span class="join">${icon('play')}</span>` : `<span class="flag">${icon('phone')}iPhone</span>`}
-          <span class="progress"><i style="width:${(progress * 100).toFixed(0)}%"></i></span></div>
-        <p class="under">${mine ? 'You opened it' : `${esc(host?.name ?? them?.name)} opened it`} · ${room.phase === 'lobby' ? 'in the lobby' : 'under way'}</p>
-      </article>`;
-    }).join('')}</div></div></section>`;
-  $$('[data-join]', box).forEach((cardEl) => (cardEl.onclick = () => (location.hash = `#room/${cardEl.dataset.join}`)));
 }
 
 async function openRoom(id, button) {
@@ -663,15 +674,15 @@ function renderOverlay(room, rules) {
   const theirName = esc(them?.name ?? partner()?.name);
   if (!rules) {
     overlay.innerHTML = `<div class="sheet">${img(room.game, 'poster', 'class="art"')}
-      <h2>${esc(gameTitle(room.game))} is on the iPhone app for now</h2>
-      <p class="dim">It’s coming to the web soon. Pick one of the web games instead.</p>
+      <h2>${esc(gameTitle(room.game))} is coming soon</h2>
+      <p class="dim">It isn’t ready here yet. Pick one of the games that are.</p>
       <button class="btn play" data-home>Back to games</button></div>`;
     $('[data-home]', overlay).onclick = () => (location.hash = '');
     return;
   }
   if (room.phase === 'lobby') {
     const mine = room.players.find((player) => player.id === me);
-    overlay.innerHTML = `<div class="sheet">${img(room.game, 'wide', 'class="art wide"')}
+    overlay.innerHTML = `<div class="sheet">${img(room.game, 'poster', 'class="art"')}
       <h2>${esc(gameTitle(room.game))}</h2>
       <p class="dim how">${esc(game(room.game)?.how ?? '')}</p>
       <div class="seats">${[mine, them].map((player) => player
@@ -786,6 +797,7 @@ $('[data-start]').onclick = () => state.couple && session.start(state.couple.id,
 session.addEventListener('change', () => {
   renderTiles();
   renderNav();
+  if (app.dataset.view === 'browse') renderHead();
   if (session.status === 'failed' && session.failure) toast(session.failure, 'bad');
 });
 
@@ -796,7 +808,6 @@ function openMenu() {
   const them = partner();
   menu.innerHTML = `<form method="dialog" class="menu">
     <div class="me">${face(state.me, 44)}<div><b>${esc(state.me.name)}</b><small>${them ? `Paired with ${esc(them.name)}` : 'Not paired yet'}</small></div></div>
-    <a class="item" href="${APP_STORE}" target="_blank" rel="noopener">${icon('phone')} Get the iPhone app</a>
     <a class="item" href="https://duoclash.app/support.html" target="_blank" rel="noopener">${icon('info')} Help</a>
     ${them ? `<button class="item" type="button" data-unpair>${icon('leave')} Unpair from ${esc(them.name)}</button>` : ''}
     <button class="item bad" type="button" data-delete>Delete my account</button>
@@ -816,7 +827,7 @@ function openMenu() {
     }
   });
   $('[data-delete]', menu).addEventListener('click', async () => {
-    if (!confirm('Delete your account? Your duo, points and everything that’s yours go, for good.')) return;
+    if (!confirm('Delete your account? Your pairing, points and everything that’s yours go, for good.')) return;
     try {
       session.hangUp();
       await call('DELETE', 'me');
